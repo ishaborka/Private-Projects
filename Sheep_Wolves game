@@ -1,0 +1,1387 @@
+import math
+
+import pygame, random
+
+# ADJUSTABLE SETTING VARIABLES
+GRASS_REFRESH_RATE = 2  # in seconds
+FPS = 30  # frames per second
+WIDTH = 600
+HEIGHT = 600
+ROWS = 20
+COLUMNS = 20
+SQ_WIDTH = WIDTH // COLUMNS
+SQ_HEIGHT = HEIGHT // ROWS
+NUM_SHEEP = 10
+NUM_WOLVES = 5
+
+
+# base class/parent class
+class GridObject(pygame.sprite.Sprite):
+    # sprite class has a rectangle and an image
+    # pygame allows us to manage sprite groups
+    # Grass group
+    # Sheep group
+    # Wolf group
+    def __init__(self, color, x, y, width, height, img=None):
+        pygame.sprite.Sprite.__init__(self)  # we need this for inheritance
+        if img is None:
+            self.image = pygame.Surface((width, height))  # rectangular image
+            self.image.fill(color)
+        else:
+            self.image = img  # or use an image
+            self.image = pygame.transform.scale(self.image, (width, height))  # resize
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+
+class Grass(GridObject):
+    COLORS = [0x5c3105, 0xcccc00, 0x99cc00, 0x66cc00, 0x33cc00, 0x009900]  # 6 colors - correspond from 0 to 5 grazes
+    MAX_GRAZES = 5
+    REFRESH_FRAMES = GRASS_REFRESH_RATE * FPS  # 2 seconds at given FPS
+
+    def __init__(self, x, y, width, height):
+        self.grazes_left = random.randint(0, self.MAX_GRAZES)
+        GridObject.__init__(self, self.COLORS[self.grazes_left], x, y, width, height)
+        self.frames_since_regrowth = random.randint(0, self.REFRESH_FRAMES)
+
+    # update - called once per frame
+    # manage the behavior of a grass square
+    def update(self):
+        if self.grazes_left == self.MAX_GRAZES:  # grass is already at max
+            return
+
+        self.frames_since_regrowth += 1
+        if self.frames_since_regrowth >= self.REFRESH_FRAMES:
+            self.grazes_left += 1
+            self.frames_since_regrowth = 0
+            self.update_color()
+
+    # can be called by the sheep class later
+    def update_color(self):
+        self.image.fill(self.COLORS[self.grazes_left])
+
+
+class Animal(GridObject):
+    MAX_ENERGY = 1000
+    REST_ENERGY_GAIN = 10
+    MAX_HUNGER = 1000
+    MOVE_HUNGER_LOSS = 2
+    REST_HUNGER_LOSS = 1
+    MATING_HUNGER_LOSS = 50
+    MATING_ENERGY_LOSS = 50
+    MATING_COOLDOWN = 10 * FPS
+    THINKING = 0
+    RESTING = 1
+    MOVING = 2
+    EATING = 3
+    MATING = 4
+    MAX_SQ_SIZE = SQ_WIDTH * 0.80
+    GROW_TIME = 1 * FPS
+    DECAY_TIME = 10 * FPS
+    MAX_LIFE_TIME = 70 * FPS
+
+    def __init__(self, x, y, w, h, color="white", image=None, speed=5.0, mating_group=None):
+        GridObject.__init__(self, color, x, y, w, h, image)
+        self.speed = speed
+        self.vision = 3
+        self.energy = self.MAX_ENERGY
+        self.grow_time = 0
+        self.decay_time = 0
+        self.life_time = random.randint(0, 10 * FPS)
+        self.move_energy_loss_factor = 0.5
+        self.move_hunger_loss_factor = 0.5
+        self.hunger = self.MAX_HUNGER
+        self.sex = random.choice(["M", "F"])
+        self.can_mate = False
+        self.mating_cooldown = self.MATING_COOLDOWN
+        self.mating_group = mating_group
+        self.alive = True
+        self.destination = None  # where the animal is trying to move to
+        self.state = self.THINKING
+        self.actions = [self.think, self.rest, self.move, self.eat, self.mate]
+
+    def is_tired(self):
+        return self.energy < 0.5 * self.MAX_ENERGY
+
+    def rest(self):
+        self.energy += self.REST_ENERGY_GAIN
+        if self.energy > self.MAX_ENERGY:
+            self.energy = self.MAX_ENERGY
+            self.state = self.THINKING
+        if self.nearby_danger() or self.is_hungry():  # interupt resting
+            self.state = self.THINKING
+
+    def move(self):
+        if self.destination is None:
+            self.state = self.THINKING
+            return
+        dest_x = self.destination[0]
+        dest_y = self.destination[1]
+        delta_x = dest_x - self.rect.x
+        delta_y = dest_y - self.rect.y
+        dist = math.sqrt(delta_x ** 2 + delta_y ** 2)
+        # 2 cases:
+        # 1.) Close enough to reach the destination - don't want to overshoot
+        if dist <= self.speed:
+            self.rect.x = round(dest_x)
+            self.rect.y = round(dest_y)
+            self.destination = None
+            self.state = self.THINKING
+        # 2.) Not close enough
+        else:
+            moves = dist / self.speed  # frames
+            # move_ip - changes the x and y by the amount given
+            self.rect.move_ip(round(delta_x / moves), round(delta_y / moves))
+        self.energy -= self.speed * self.move_energy_loss_factor
+        self.hunger -= self.speed * self.move_hunger_loss_factor
+
+    def think(self):
+        # model animal intelligence/reasoning
+        # rest, move, eat, find food, find mate, mate, avoid danger
+        # first priority - avoid danger
+        if self.nearby_danger():
+            self.avoid_danger()
+            self.state = self.MOVING
+        # second priority - keeping hunger value high
+        elif self.is_hungry():
+            if self.nearby_food():
+                self.state = self.EATING
+            else:
+                self.find_food()
+                self.state = self.MOVING
+        # third priority - keeping energy value high
+        elif self.is_tired():
+            self.state = self.RESTING
+        # last priority - finding mate
+        elif self.can_mate:
+            if self.nearby_mate():
+                self.state = self.MATING
+            else:
+                self.find_mate()
+                self.state = self.MOVING
+        # IDLE - rest/eat/move randomly
+        else:
+            self.state = random.choice([self.EATING, self.RESTING, self.MOVING])
+            if self.state == self.EATING and not self.nearby_food():
+                self.state = random.choice([self.RESTING, self.MOVING])
+            if self.state == self.MOVING and self.destination is None:
+                self.get_random_destination()
+
+    def get_random_destination(self):
+        # randomly pick a point that is within [x +/-speed, y +/-speed]
+        x = self.rect.x + random.uniform(-self.speed, self.speed)
+        y = self.rect.y + random.uniform(-self.speed, self.speed)
+        self.destination = (x, y)
+
+    def mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False):
+            if mate.sex != self.sex and mate.can_mate:
+                mate.can_mate = False
+                self.can_mate = False
+                mate.mating_cooldown = self.MATING_COOLDOWN
+                self.mating_cooldown = self.MATING_COOLDOWN  # reset counter to 10 seconds
+                mate.energy -= self.MATING_ENERGY_LOSS
+                mate.hunger -= self.MATING_HUNGER_LOSS
+                self.energy -= self.MATING_ENERGY_LOSS
+                self.hunger -= self.MATING_HUNGER_LOSS
+                self.state = self.THINKING
+                return mate, True
+
+        self.state = self.THINKING
+        return None, False
+
+    def nearby_mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False):
+            if mate.sex != self.sex and mate.can_mate:
+                return True
+        return False
+
+    def find_mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False,
+                                                pygame.sprite.collide_rect_ratio(self.vision)):
+            if mate.sex != self.sex and mate.can_mate:
+                self.destination = (mate.rect.x, mate.rect.y)
+                return
+
+        # move randomly - no mate found
+        self.get_random_destination()
+
+    def nearby_danger(self):
+        return False  # TODO: define later in the subclasses (wolf, sheep)
+
+    def avoid_danger(self):
+        return  # TODO: find a safe location to move to by setting self.destination
+
+    def eat(self):
+        pass
+
+    def is_hungry(self):
+        return self.hunger < 0.5 * self.MAX_HUNGER
+
+    def nearby_food(self):
+        return False
+
+    def find_food(self):
+        return
+
+    def update(self):
+        if self.alive:
+            self.life_time += 1
+            if self.energy <= 0 or self.hunger <= 0 or self.life_time == self.MAX_LIFE_TIME:
+                self.alive = False
+                self.image.fill("black")
+                self.can_mate = False
+                return
+
+            # grow until reaches max size
+            if self.rect.w < self.MAX_SQ_SIZE:
+                self.grow_time += 1
+                if self.grow_time == self.GROW_TIME:
+                    self.rect.inflate_ip(1, 1)
+                    self.image = pygame.transform.scale(self.image, self.rect.size)
+                    self.grow_time = 0  # reset timer
+
+            else:  # fully grown
+                # decrease mating cooldown
+                if self.mating_cooldown > 0:
+                    self.mating_cooldown -= 1
+                elif self.mating_cooldown == 0:
+                    self.can_mate = True
+
+            # print("State:", self.state)
+            # print("Energy:", self.energy)
+            # print("Hunger:", self.hunger)
+            self.energy -= 1
+            self.hunger -= 1
+
+            self.actions[self.state]()  # calls the appropriate action based on state
+
+        else:  # not alive
+            if self.decay_time < self.DECAY_TIME:
+                self.decay_time += 1
+            else:
+                # TODO: replenishes the grazes of the grass that it's in contact with
+                self.kill()  # pygame.sprite method that removes the object from its groups
+
+
+class Sheep(Animal):
+    HUNGER_GAIN_FROM_GRASS = 30
+    MALE_COLOR = 0xab0371
+    FEMALE_COLOR = 0xf571c7
+
+    def __init__(self, x, y, w, h, grass_group, wolf_group, image=None, mating_group=None):
+        Animal.__init__(self, x, y, w, h, image=image, speed=3.0, mating_group=mating_group)
+        self.grass_group = grass_group
+        self.wolf_group = wolf_group
+        if self.sex == "M":
+            self.image.fill(self.MALE_COLOR)
+        else:
+            self.image.fill(self.FEMALE_COLOR)
+
+    def eat(self):
+        for grass_sq in pygame.sprite.spritecollide(self, self.grass_group, False):
+            if grass_sq.grazes_left > 0:
+                grass_sq.grazes_left -= 1
+                grass_sq.update_color()
+                self.hunger += self.HUNGER_GAIN_FROM_GRASS
+                if self.hunger > self.MAX_HUNGER:
+                    self.hunger = self.MAX_HUNGER
+                break  # only eat from one square
+        self.state = self.THINKING
+
+    def nearby_food(self):
+        for grass_sq in pygame.sprite.spritecollide(self, self.grass_group, False):
+            if grass_sq.grazes_left > 0:
+                return True
+        return False
+
+    def find_food(self):
+        close_grass = pygame.sprite.spritecollide(self, self.grass_group, False,
+                                                  pygame.sprite.collide_rect_ratio(self.vision))
+        most_grazes = 0
+        best_grass = pygame.sprite.Group()
+        for grass in close_grass:
+            if grass.grazes_left > most_grazes:
+                most_grazes = grass.grazes_left
+                best_grass.empty()  # empty the group
+                best_grass.add(grass)
+            elif grass.grazes_left == most_grazes:
+                best_grass.add(grass)
+
+        # no grass to eat
+        if most_grazes == 0:
+            self.get_random_destination()
+            return
+
+        # TODO: (optional) go to the closest grass_square in best_grass
+        # instead, we will just have the sheep pick one at random
+        random_index = random.randint(0, len(best_grass) - 1)
+        i = 0
+        for grass in best_grass:
+            if i == random_index:
+                self.destination = (grass.rect.x, grass.rect.y)
+                break
+            i += 1
+
+    def mate(self):
+        parent, did_mate = super().mate()  # calling the Animal.mate() function
+        if parent is not None:
+            # spawn a baby sheep
+            baby = Sheep(self.rect.x, self.rect.y, SQ_WIDTH / 4, SQ_HEIGHT / 4, self.grass_group, self.wolf_group,
+                         mating_group=self.mating_group)
+            baby.speed = (self.speed + parent.speed) / 2 + random.uniform(-0.1, 0.1)
+            baby.vision = (self.vision + parent.vision) / 2 + random.uniform(-0.1, 0.1)
+            self.mating_group.add(baby)
+
+class Wolf(Animal):
+    HUNGER_GAIN_FROM_SHEEP = 35
+    MALE_COLOR = 0xab0371
+    FEMALE_COLOR = 0x68788f
+
+    def __init__(self, x, y, w, h, grass_group, sheep_group, image=None, mating_group=None):
+        Animal.__init__(self, x, y, w, h, image=image, speed=3.0, mating_group=mating_group)
+        self.grass_group = grass_group
+        self.sheep_group = sheep_group
+        if self.sex == "M":
+            self.image.fill(self.MALE_COLOR)
+        else:
+            self.image.fill(self.FEMALE_COLOR)
+
+    def eat(self):
+        for sheep_sq in pygame.sprite.spritecollide(self, self.sheep_group, False):
+            if not sheep_sq.alive:
+                sheep_sq.decay_time = sheep_sq.DECAY_TIME * 2
+                self.hunger += self.HUNGER_GAIN_FROM_SHEEP
+                self.energy += self.ENERGY_GAIN_FROM_SHEEP
+                sheep_sq.image.fill("black")
+                sheep_sq.can_mate = False
+                if self.hunger > self.MAX_HUNGER:
+                    self.hunger = self.MAX_HUNGER
+                break
+        self.state = self.THINKING
+      
+  def nearby_food(self):
+    for sheep_sq in pygame.sprite.spritecollide(self, self.sheep_group, False):
+      if sheep_sq.alive:
+        return True
+    return False
+
+    def find_food(self):
+        close_sheep = pygame.sprite.spritecollide(self, self.sheep_group, False,
+                                                  pygame.sprite.collide_rect_ratio(self.vision))
+        for sheep in close_sheep:
+            dest_x = sheep.rect.x
+            dest_y = sheep.rect.y
+            self.destination = (dest_x, dest_y)
+        sheep.image.fill("black")
+        sheep.can_mate = False
+        sheep.alive = False
+
+                                              
+      
+    def mate(self):
+      parent, did_mate = super().mate()  # calling the Animal.mate() function
+        if parent is not None:
+            # spawn a baby sheep
+            baby = Wolf(self.rect.x, self.rect.y, SQ_WIDTH / 4, SQ_HEIGHT / 4, self.grass_group, self.sheep_group,
+                         mating_group=self.mating_group)
+            baby.speed = (self.speed + parent.speed) / 2 + random.uniform(-0.1, 0.1)
+            baby.vision = (self.vision + parent.vision) / 2 + random.uniform(-0.1, 0.1)
+            self.mating_group.add(baby)
+
+
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((600, 600))
+    running = True
+    clock = pygame.time.Clock()  # for managing the framerate
+
+    grass_group = pygame.sprite.Group()
+    for row in range(ROWS):
+        y = row * SQ_HEIGHT
+        for col in range(COLUMNS):
+            x = col * SQ_WIDTH
+            grass_object = Grass(x, y, SQ_WIDTH, SQ_HEIGHT)
+            grass_group.add(grass_object)
+
+    # animal group
+    sheep_group = pygame.sprite.Group()
+    wolf_group = pygame.sprite.Group()
+    for i in range(NUM_SHEEP):
+        sheep = Sheep(WIDTH / 2, HEIGHT / 2, SQ_WIDTH / 2, SQ_HEIGHT / 2, grass_group, mating_group=sheep_group, wolf_group=wolf_group)
+        sheep_group.add(sheep)
+
+      for i in range(NUM_WOLVES):
+        wolf = Wolf(WIDTH / 2, HEIGHT / 2, SQ_WIDTH / 2, SQ_HEIGHT / 2, grass_group, sheep_group=sheep_group, mating_group=wolf_group)
+        wolf_group.add(wolf)
+  
+    frame_count = 0
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                sheep.destination = event.pos
+
+        frame_count += 1
+        if frame_count % (10 * FPS) == 0:
+            speed = 0
+            for sheep in sheep_group:
+                speed += sheep.speed
+            print("Average speed: ", speed / len(sheep_group))
+
+        grass_group.update()
+        sheep_group.update()
+        wolf_group.update()
+
+        grass_group.draw(screen)
+        sheep_group.draw(screen)
+        wolf_group.draw(screen)
+
+        clock.tick(FPS)
+        pygame.display.flip()
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+#all of code
+import math
+
+import pygame, random
+
+# ADJUSTABLE SETTING VARIABLES
+GRASS_REFRESH_RATE = 2  # in seconds
+FPS = 30  # frames per second
+WIDTH = 600
+HEIGHT = 600
+ROWS = 20
+COLUMNS = 20
+SQ_WIDTH = WIDTH // COLUMNS
+SQ_HEIGHT = HEIGHT // ROWS
+NUM_SHEEP = 20
+NUM_WOLVES = 10
+
+
+# base class/parent class
+class GridObject(pygame.sprite.Sprite):
+    # sprite class has a rectangle and an image
+    # pygame allows us to manage sprite groups
+    # Grass group
+    # Sheep group
+    # Wolf group
+    def __init__(self, color, x, y, width, height, img=None):
+        pygame.sprite.Sprite.__init__(self)  # we need this for inheritance
+        if img is None:
+            self.image = pygame.Surface((width, height))  # rectangular image
+            self.image.fill(color)
+        else:
+            self.image = img  # or use an image
+            self.image = pygame.transform.scale(self.image, (width, height))  # resize
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+
+class Grass(GridObject):
+    COLORS = [0x5c3105, 0xcccc00, 0x99cc00, 0x66cc00, 0x33cc00, 0x009900]  # 6 colors - correspond from 0 to 5 grazes
+    MAX_GRAZES = 5
+    REFRESH_FRAMES = GRASS_REFRESH_RATE * FPS  # 2 seconds at given FPS
+
+    def __init__(self, x, y, width, height):
+        self.grazes_left = random.randint(0, self.MAX_GRAZES)
+        GridObject.__init__(self, self.COLORS[self.grazes_left], x, y, width, height)
+        self.frames_since_regrowth = random.randint(0, self.REFRESH_FRAMES)
+
+    # update - called once per frame
+    # manage the behavior of a grass square
+    def update(self):
+        if self.grazes_left == self.MAX_GRAZES:  # grass is already at max
+            return
+
+        self.frames_since_regrowth += 1
+        if self.frames_since_regrowth >= self.REFRESH_FRAMES:
+            self.grazes_left += 1
+            self.frames_since_regrowth = 0
+            self.update_color()
+
+    # can be called by the sheep class later
+    def update_color(self):
+        self.image.fill(self.COLORS[self.grazes_left])
+
+
+class Animal(GridObject):
+    MAX_ENERGY = 10000
+    REST_ENERGY_GAIN = 10
+    MAX_HUNGER = 1000
+    MOVE_HUNGER_LOSS = 2
+    REST_HUNGER_LOSS = 1
+    MATING_HUNGER_LOSS = 50
+    MATING_ENERGY_LOSS = 50
+    MATING_COOLDOWN = 10 * FPS
+    THINKING = 0
+    RESTING = 1
+    MOVING = 2
+    EATING = 3
+    MATING = 4
+    MAX_SQ_SIZE = SQ_WIDTH * 0.80
+    GROW_TIME = 1 * FPS
+    DECAY_TIME = 10 * FPS
+    MAX_LIFE_TIME = 70 * FPS
+
+    def __init__(self, x, y, w, h, color="white", image=None, speed=5.0, mating_group=None):
+        GridObject.__init__(self, color, x, y, w, h, image)
+        self.speed = speed
+        self.vision = 3
+        self.energy = self.MAX_ENERGY
+        self.grow_time = 0
+        self.decay_time = 0
+        self.life_time = random.randint(0, 10 * FPS)
+        self.move_energy_loss_factor = 0.5
+        self.move_hunger_loss_factor = 0.5
+        self.hunger = self.MAX_HUNGER
+        self.sex = random.choice(["M", "F"])
+        self.can_mate = False
+        self.mating_cooldown = self.MATING_COOLDOWN
+        self.mating_group = mating_group
+        self.alive = True
+        self.destination = None  # where the animal is trying to move to
+        self.state = self.THINKING
+        self.actions = [self.think, self.rest, self.move, self.eat, self.mate]
+
+    def is_tired(self):
+        return self.energy < 0.5 * self.MAX_ENERGY
+
+    def rest(self):
+        self.energy += self.REST_ENERGY_GAIN
+        if self.energy > self.MAX_ENERGY:
+            self.energy = self.MAX_ENERGY
+            self.state = self.THINKING
+        if self.nearby_danger() or self.is_hungry():  # interupt resting
+            self.state = self.THINKING
+
+    def move(self):
+        if self.destination is None:
+            self.state = self.THINKING
+            return
+        dest_x = self.destination[0]
+        dest_y = self.destination[1]
+        delta_x = dest_x - self.rect.x
+        delta_y = dest_y - self.rect.y
+        dist = math.sqrt(delta_x ** 2 + delta_y ** 2)
+        # 2 cases:
+        # 1.) Close enough to reach the destination - don't want to overshoot
+        if dist <= self.speed:
+            self.rect.x = round(dest_x)
+            self.rect.y = round(dest_y)
+            self.destination = None
+            self.state = self.THINKING
+        # 2.) Not close enough
+        else:
+            moves = dist / self.speed  # frames
+            # move_ip - changes the x and y by the amount given
+            self.rect.move_ip(round(delta_x / moves), round(delta_y / moves))
+        self.energy -= self.speed * self.move_energy_loss_factor
+        self.hunger -= self.speed * self.move_hunger_loss_factor
+
+    def think(self):
+        # model animal intelligence/reasoning
+        # rest, move, eat, find food, find mate, mate, avoid danger
+        # first priority - avoid danger
+        if self.nearby_danger():
+            self.avoid_danger()
+            self.state = self.MOVING
+        # second priority - keeping hunger value high
+        elif self.is_hungry():
+            if self.nearby_food():
+                self.state = self.EATING
+            else:
+                self.find_food()
+                self.state = self.MOVING
+        # third priority - keeping energy value high
+        elif self.is_tired():
+            self.state = self.RESTING
+        # last priority - finding mate
+        elif self.can_mate:
+            if self.nearby_mate():
+                self.state = self.MATING
+            else:
+                self.find_mate()
+                self.state = self.MOVING
+        # IDLE - rest/eat/move randomly
+        else:
+            self.state = random.choice([self.EATING, self.RESTING, self.MOVING])
+            if self.state == self.EATING and not self.nearby_food():
+                self.state = random.choice([self.RESTING, self.MOVING])
+            if self.state == self.MOVING and self.destination is None:
+                self.get_random_destination()
+
+    def get_random_destination(self):
+        # randomly pick a point that is within [x +/-speed, y +/-speed]
+        x = self.rect.x + random.uniform(-self.speed, self.speed)
+        y = self.rect.y + random.uniform(-self.speed, self.speed)
+        self.destination = (x, y)
+
+    def mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False):
+            if mate.sex != self.sex and mate.can_mate:
+                mate.can_mate = False
+                self.can_mate = False
+                mate.mating_cooldown = self.MATING_COOLDOWN
+                self.mating_cooldown = self.MATING_COOLDOWN  # reset counter to 10 seconds
+                mate.energy -= self.MATING_ENERGY_LOSS
+                mate.hunger -= self.MATING_HUNGER_LOSS
+                self.energy -= self.MATING_ENERGY_LOSS
+                self.hunger -= self.MATING_HUNGER_LOSS
+                self.state = self.THINKING
+                return mate, True
+
+        self.state = self.THINKING
+        return None, False
+
+    def nearby_mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False):
+            if mate.sex != self.sex and mate.can_mate:
+                return True
+        return False
+
+    def find_mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False,
+                                                pygame.sprite.collide_rect_ratio(self.vision)):
+            if mate.sex != self.sex and mate.can_mate:
+                self.destination = (mate.rect.x, mate.rect.y)
+                return
+
+        # move randomly - no mate found
+        self.get_random_destination()
+
+    def nearby_danger(self):
+        return False  # TODO: define later in the subclasses (wolf, sheep)
+
+    def avoid_danger(self):
+        return  # TODO: find a safe location to move to by setting self.destination
+
+    def eat(self):
+        pass
+
+    def is_hungry(self):
+        return self.hunger < 0.5 * self.MAX_HUNGER
+
+    def nearby_food(self):
+        return False
+
+    def find_food(self):
+        return
+
+    def update(self):
+        if self.alive:
+            self.life_time += 1
+            if self.energy <= 0 or self.hunger <= 0 or self.life_time == self.MAX_LIFE_TIME:
+                self.alive = False
+                self.image.fill("black")
+                self.can_mate = False
+                return
+
+            # grow until reaches max size
+            if self.rect.w < self.MAX_SQ_SIZE:
+                self.grow_time += 1
+                if self.grow_time == self.GROW_TIME:
+                    self.rect.inflate_ip(1, 1)
+                    self.image = pygame.transform.scale(self.image, self.rect.size)
+                    self.grow_time = 0  # reset timer
+
+            else:  # fully grown
+                # decrease mating cooldown
+                if self.mating_cooldown > 0:
+                    self.mating_cooldown -= 1
+                elif self.mating_cooldown == 0:
+                    self.can_mate = True
+
+            # print("State:", self.state)
+            # print("Energy:", self.energy)
+            # print("Hunger:", self.hunger)
+            self.energy -= 1
+            self.hunger -= 1
+
+            self.actions[self.state]()  # calls the appropriate action based on state
+
+        else:  # not alive
+            if self.decay_time < self.DECAY_TIME:
+                self.decay_time += 1
+            else:
+                # TODO: replenishes the grazes of the grass that it's in contact with
+                self.kill()  # pygame.sprite method that removes the object from its groups
+
+
+class Sheep(Animal):
+    HUNGER_GAIN_FROM_GRASS = 30
+    MALE_COLOR = 0xab0371
+    FEMALE_COLOR = 0xf571c7
+
+    def __init__(self, x, y, w, h, grass_group, wolf_group, image=None, mating_group=None):
+        Animal.__init__(self, x, y, w, h, image=image, speed=3.0, mating_group=mating_group)
+        self.grass_group = grass_group
+        self.wolf_group = wolf_group
+        if self.sex == "M":
+            self.image.fill(self.MALE_COLOR)
+        else:
+            self.image.fill(self.FEMALE_COLOR)
+
+    def eat(self):
+        for grass_sq in pygame.sprite.spritecollide(self, self.grass_group, False):
+            if grass_sq.grazes_left > 0:
+                grass_sq.grazes_left -= 1
+                grass_sq.update_color()
+                self.hunger += self.HUNGER_GAIN_FROM_GRASS
+                if self.hunger > self.MAX_HUNGER:
+                    self.hunger = self.MAX_HUNGER
+                break  # only eat from one square
+        self.state = self.THINKING
+
+    def nearby_food(self):
+        for grass_sq in pygame.sprite.spritecollide(self, self.grass_group, False):
+            if grass_sq.grazes_left > 0:
+                return True
+        return False
+
+    def find_food(self):
+        close_grass = pygame.sprite.spritecollide(self, self.grass_group, False,
+                                                  pygame.sprite.collide_rect_ratio(self.vision))
+        most_grazes = 0
+        best_grass = pygame.sprite.Group()
+        for grass in close_grass:
+            if grass.grazes_left > most_grazes:
+                most_grazes = grass.grazes_left
+                best_grass.empty()  # empty the group
+                best_grass.add(grass)
+            elif grass.grazes_left == most_grazes:
+                best_grass.add(grass)
+
+        # no grass to eat
+        if most_grazes == 0:
+            self.get_random_destination()
+            return
+
+        # TODO: (optional) go to the closest grass_square in best_grass
+        # instead, we will just have the sheep pick one at random
+        random_index = random.randint(0, len(best_grass) - 1)
+        i = 0
+        for grass in best_grass:
+            if i == random_index:
+                self.destination = (grass.rect.x, grass.rect.y)
+                break
+            i += 1
+
+    def mate(self):
+        parent, did_mate = super().mate()  # calling the Animal.mate() function
+        if parent is not None:
+            # spawn a baby sheep
+            baby = Sheep(self.rect.x, self.rect.y, SQ_WIDTH / 4, SQ_HEIGHT / 4, self.grass_group, self.wolf_group,
+                         mating_group=self.mating_group)
+            baby.speed = (self.speed + parent.speed) / 2 + random.uniform(-0.1, 0.1)
+            baby.vision = (self.vision + parent.vision) / 2 + random.uniform(-0.1, 0.1)
+            self.mating_group.add(baby)
+
+
+class Wolf(Animal):
+    HUNGER_GAIN_FROM_SHEEP = 35
+    MALE_COLOR = 0x9c2bed
+    FEMALE_COLOR = 0x382bed
+    ENERGY_GAIN_FROM_SHEEP = 50
+    MAX_ENERGY = 2000
+    def __init__(self, x, y, w, h, grass_group, sheep_group, image=None, mating_group=None):
+        Animal.__init__(self, x, y, w, h, image=image, speed=3.0, mating_group=mating_group)
+        self.grass_group = grass_group
+        self.sheep_group = sheep_group
+        if self.sex == "M":
+            self.image.fill(self.MALE_COLOR)
+        else:
+            self.image.fill(self.FEMALE_COLOR)
+
+    def eat(self):
+        food = []
+        for sheep_sq in pygam  e.sprite.spritecollide(self, self.sheep_group, False):
+            food.append(sheep_sq)
+
+        sheep_sq = random.choice(food)
+        if sheep_sq.alive:
+            sheep_sq.image.fill("black")
+            sheep_sq.can_mate = False
+            sheep_sq.alive = False
+
+        elif not sheep_sq.alive:
+            sheep_sq.decay_time = sheep_sq.DECAY_TIME + 10
+            self.hunger += self.HUNGER_GAIN_FROM_SHEEP
+            self.energy += self.ENERGY_GAIN_FROM_SHEEP
+            if self.hunger > self.MAX_HUNGER:
+                self.hunger = self.MAX_HUNGER
+        self.state = self.THINKING
+
+
+    def nearby_food(self):
+        for sheep_sq in pygame.sprite.spritecollide(self, self.sheep_group, False):
+            if sheep_sq.alive:
+                return True
+        return False
+
+    def find_food(self):
+        close_sheep = pygame.sprite.spritecollide(self, self.sheep_group, False,
+                                                  pygame.sprite.collide_rect_ratio(self.vision))
+
+        for sheep in close_sheep:
+            dest_x = sheep.rect.x
+            dest_y = sheep.rect.y
+            self.destination = (dest_x, dest_y)
+
+    def mate(self):
+        parent, did_mate = super().mate()  # calling the Animal.mate() function
+        print("Wolf mate: ", did_mate)
+        if parent is not None:
+            # spawn a baby sheep
+            baby = Wolf(self.rect.x, self.rect.y, SQ_WIDTH / 4, SQ_HEIGHT / 4, self.grass_group, self.sheep_group,
+                        mating_group=self.mating_group)
+            baby.speed = (self.speed + parent.speed) / 2 + random.uniform(-0.1, 0.1)
+            baby.vision = (self.vision + parent.vision) / 2 + random.uniform(-0.1, 0.1)
+            self.mating_group.add(baby)
+
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((600, 600))
+    running = True
+    clock = pygame.time.Clock()  # for managing the framerate
+
+    grass_group = pygame.sprite.Group()
+    for row in range(ROWS):
+        y = row * SQ_HEIGHT
+        for col in range(COLUMNS):
+            x = col * SQ_WIDTH
+            grass_object = Grass(x, y, SQ_WIDTH, SQ_HEIGHT)
+            grass_group.add(grass_object)
+
+    # animal group
+    sheep_group = pygame.sprite.Group()
+    wolf_group = pygame.sprite.Group()
+    for i in range(NUM_SHEEP):
+        sheep = Sheep(WIDTH / 2, HEIGHT / 2, SQ_WIDTH / 2, SQ_HEIGHT / 2, grass_group, mating_group=sheep_group,
+                      wolf_group=wolf_group)
+        sheep_group.add(sheep)
+
+    for i in range(NUM_WOLVES):
+        wolf = Wolf(WIDTH / 3, HEIGHT / 3, SQ_WIDTH / 2, SQ_HEIGHT / 2, grass_group, sheep_group=sheep_group,
+                    mating_group=wolf_group)
+        wolf_group.add(wolf)
+
+    frame_count = 0
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                sheep.destination = event.pos
+
+        frame_count += 1
+        if frame_count % (10 * FPS) == 0:
+            speed = 0
+            for sheep in sheep_group:
+                speed += sheep.speed
+#            print("Average speed: ", speed / len(sheep_group))
+
+        grass_group.update()
+        sheep_group.update()
+        wolf_group.update()
+
+        grass_group.draw(screen)
+        sheep_group.draw(screen)
+        wolf_group.draw(screen)
+
+        clock.tick(FPS)
+        pygame.display.flip()
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+#Isha's code:
+import math
+
+import pygame, random
+
+# ADJUSTABLE SETTING VARIABLES
+GRASS_REFRESH_RATE = 2  # in seconds
+FPS = 30  # frames per second
+WIDTH = 600
+HEIGHT = 600
+ROWS = 20
+COLUMNS = 20
+SQ_WIDTH = WIDTH // COLUMNS
+SQ_HEIGHT = HEIGHT // ROWS
+NUM_SHEEP = 20
+NUM_WOLF = 10
+
+
+# base class/parent class
+class GridObject(pygame.sprite.Sprite):
+    # sprite class has a rectangle and an image
+    # pygame allows us to manage sprite groups
+    # Grass group
+    # Sheep group
+    # Wolf group
+    def __init__(self, color, x, y, width, height, img=None):
+        pygame.sprite.Sprite.__init__(self)  # we need this for inheritance
+        if img is None:
+            self.image = pygame.Surface((width, height))  # rectangular image
+            self.image.fill(color)
+        else:
+            self.image = img  # or use an image
+            self.image = pygame.transform.scale(self.image, (width, height))  # resize
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+
+class Grass(GridObject):
+    COLORS = [0x5c3105, 0xcccc00, 0x99cc00, 0x66cc00, 0x33cc00, 0x009900]  # 6 colors - correspond from 0 to 5 grazes
+    MAX_GRAZES = 5
+    REFRESH_FRAMES = GRASS_REFRESH_RATE * FPS  # 2 seconds at given FPS
+
+    def __init__(self, x, y, width, height):
+        self.grazes_left = random.randint(0, self.MAX_GRAZES)
+        GridObject.__init__(self, self.COLORS[self.grazes_left], x, y, width, height)
+        self.frames_since_regrowth = random.randint(0, self.REFRESH_FRAMES)
+
+    # update - called once per frame
+    # manage the behavior of a grass square
+    def update(self):
+        if self.grazes_left == self.MAX_GRAZES:  # grass is already at max
+            return
+
+        self.frames_since_regrowth += 1
+        if self.frames_since_regrowth >= self.REFRESH_FRAMES:
+            self.grazes_left += 1
+            self.frames_since_regrowth = 0
+            self.update_color()
+
+    # can be called by the sheep class later
+    def update_color(self):
+        self.image.fill(self.COLORS[self.grazes_left])
+
+
+class Animal(GridObject):
+    MAX_ENERGY = 10000000
+    REST_ENERGY_GAIN = 10
+    MAX_HUNGER = 1000
+    MOVE_HUNGER_LOSS = 2
+    REST_HUNGER_LOSS = 1
+    MATING_HUNGER_LOSS = 50
+    MATING_ENERGY_LOSS = 50
+    MATING_COOLDOWN = 10 * FPS
+    THINKING = 0
+    RESTING = 1
+    MOVING = 2
+    EATING = 3
+    MATING = 4
+    MAX_SQ_SIZE = SQ_WIDTH * 0.80
+    GROW_TIME = 1 * FPS
+    DECAY_TIME = 10 * FPS
+    MAX_LIFE_TIME = 70 * FPS
+
+    def __init__(self, x, y, w, h, grass_group, color="white", image=None, speed=5.0, mating_group=None):
+        GridObject.__init__(self, color, x, y, w, h, image)
+        self.speed = speed
+        self.vision = 3
+        self.energy = self.MAX_ENERGY
+        self.grow_time = 0
+        self.decay_time = 0
+        self.grass_group = grass_group
+        self.life_time = random.randint(0, 10 * FPS)
+        self.move_energy_loss_factor = 0.5
+        self.move_hunger_loss_factor = 0.5
+        self.hunger = self.MAX_HUNGER
+        self.sex = random.choice(["M", "F"])
+        self.can_mate = False
+        self.mating_cooldown = self.MATING_COOLDOWN
+        self.mating_group = mating_group
+        self.alive = True
+        self.destination = None  # where the animal is trying to move to
+        self.state = self.THINKING
+        self.actions = [self.think, self.rest, self.move, self.eat, self.mate]
+
+    def is_tired(self):
+        return self.energy < 0.5 * self.MAX_ENERGY
+
+    def rest(self):
+        self.energy += self.REST_ENERGY_GAIN
+        if self.energy > self.MAX_ENERGY:
+            self.energy = self.MAX_ENERGY
+            self.state = self.THINKING
+        if self.nearby_danger() or self.is_hungry():  # interupt resting
+            self.state = self.THINKING
+
+    def move(self):
+        if self.destination is None:
+            self.state = self.THINKING
+            return
+        dest_x = self.destination[0]
+        dest_y = self.destination[1]
+        delta_x = dest_x - self.rect.x
+        delta_y = dest_y - self.rect.y
+        dist = math.sqrt(delta_x ** 2 + delta_y ** 2)
+        # 2 cases:
+        # 1.) Close enough to reach the destination - don't want to overshoot
+        if dist <= self.speed:
+            self.rect.x = round(dest_x)
+            self.rect.y = round(dest_y)
+            self.destination = None
+            self.state = self.THINKING
+        # 2.) Not close enough
+        else:
+            moves = dist / self.speed  # frames
+            # move_ip - changes the x and y by the amount given
+            self.rect.move_ip(round(delta_x / moves), round(delta_y / moves))
+        self.energy -= self.speed * self.move_energy_loss_factor
+        self.hunger -= self.speed * self.move_hunger_loss_factor
+
+    def think(self):
+        # model animal intelligence/reasoning
+        # rest, move, eat, find food, find mate, mate, avoid danger
+        # first priority - avoid danger
+        if self.nearby_danger():
+            self.avoid_danger()
+            self.state = self.MOVING
+        # second priority - keeping hunger value high
+        elif self.is_hungry():
+            if self.nearby_food():
+                self.state = self.EATING
+            else:
+                self.find_food()
+                self.state = self.MOVING
+        # third priority - keeping energy value high
+        elif self.is_tired():
+            self.state = self.RESTING
+        # last priority - finding mate
+        elif self.can_mate:
+            if self.nearby_mate():
+                self.state = self.MATING
+            else:
+                self.find_mate()
+                self.state = self.MOVING
+        # IDLE - rest/eat/move randomly
+        else:
+            self.state = random.choice([self.EATING, self.RESTING, self.MOVING])
+            if self.state == self.EATING and not self.nearby_food():
+                self.state = random.choice([self.RESTING, self.MOVING])
+            if self.state == self.MOVING and self.destination is None:
+                self.get_random_destination()
+
+    def get_random_destination(self):
+        # randomly pick a point that is within [x +/-speed, y +/-speed]
+        x = self.rect.x + random.uniform(-self.speed, self.speed)
+        y = self.rect.y + random.uniform(-self.speed, self.speed)
+        self.destination = (x, y)
+
+    def mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False):
+            if mate.sex != self.sex and mate.can_mate:
+                mate.can_mate = False
+                self.can_mate = False
+                mate.mating_cooldown = self.MATING_COOLDOWN
+                self.mating_cooldown = self.MATING_COOLDOWN  # reset counter to 10 seconds
+                mate.energy -= self.MATING_ENERGY_LOSS
+                mate.hunger -= self.MATING_HUNGER_LOSS
+                self.energy -= self.MATING_ENERGY_LOSS
+                self.hunger -= self.MATING_HUNGER_LOSS
+                self.state = self.THINKING
+                return mate, True
+
+        self.state = self.THINKING
+        return None, False
+
+    def nearby_mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False):
+            if mate.sex != self.sex and mate.can_mate:
+                return True
+        return False
+
+    def find_mate(self):
+        for mate in pygame.sprite.spritecollide(self, self.mating_group, False,
+                                                pygame.sprite.collide_rect_ratio(self.vision)):
+            if mate.sex != self.sex and mate.can_mate:
+                d1 = float(mate.rect.x + self.rect.x) / 2
+                d2 = float(mate.rect.y + self.rect.y) / 2
+                self.destination = (d1, d2)
+                return
+
+        # move randomly - no mate found
+        self.get_random_destination()
+
+    def nearby_danger(self):
+        return False  # TODO: define later in the subclasses (wolf, sheep)
+
+    def avoid_danger(self):
+        return  # TODO: find a safe location to move to by setting self.destination
+
+    def eat(self):
+        pass
+
+    def is_hungry(self):
+        return self.hunger < 0.5 * self.MAX_HUNGER
+
+    def nearby_food(self):
+        return False
+
+    def find_food(self):
+        return
+
+    def update(self):
+        if self.alive:
+            self.life_time += 1
+            if self.energy <= 0 or self.hunger <= 0 or self.life_time == self.MAX_LIFE_TIME:
+                self.alive = False
+                self.image.fill("black")
+                self.can_mate = False
+
+                return
+
+            # grow until reaches max size
+            if self.rect.w < self.MAX_SQ_SIZE:
+                self.grow_time += 1
+                if self.grow_time == self.GROW_TIME:
+                    self.rect.inflate_ip(1, 1)
+                    self.image = pygame.transform.scale(self.image, self.rect.size)
+                    self.grow_time = 0  # reset timer
+
+            else:  # fully grown
+                # decrease mating cooldown
+                if self.mating_cooldown > 0:
+                    self.mating_cooldown -= 1
+                elif self.mating_cooldown == 0:
+                    self.can_mate = True
+
+            # print("State:", self.state)
+            # print("Energy:", self.energy)
+            # print("Hunger:", self.hunger)
+            self.energy -= 1
+            self.hunger -= 1
+
+            self.actions[self.state]()  # calls the appropriate action based on state
+
+        else:  # not alive
+            if self.decay_time < self.DECAY_TIME:
+                self.decay_time += 1
+            else:
+                for grass in pygame.sprite.spritecollide(self, self.grass_group, False):
+                    grass.grazes_left = Grass.MAX_GRAZES
+                    grass.update_color()
+                self.kill()  # pygame.sprite method that removes the object from its groups
+
+
+class Sheep(Animal):
+    HUNGER_GAIN_FROM_GRASS = 30
+    MALE_COLOR = 0xab0371
+    FEMALE_COLOR = 0xf571c7
+
+    def __init__(self, x, y, w, h, grass_group, wolf_group, image=None, mating_group=None):
+        Animal.__init__(self, x, y, w, h, grass_group, image=image, speed=3.0, mating_group=mating_group)
+        self.grass_group = grass_group
+        self.wolf_group = wolf_group
+        if self.sex == "M":
+            self.image.fill(self.MALE_COLOR)
+        else:
+            self.image.fill(self.FEMALE_COLOR)
+
+    def eat(self):
+        for grass_sq in pygame.sprite.spritecollide(self, self.grass_group, False):
+            if grass_sq.grazes_left > 0:
+                grass_sq.grazes_left -= 1
+                grass_sq.update_color()
+                self.hunger += self.HUNGER_GAIN_FROM_GRASS
+                if self.hunger > self.MAX_HUNGER:
+                    self.hunger = self.MAX_HUNGER
+                break  # only eat from one square
+        self.state = self.THINKING
+
+    def nearby_food(self):
+        for grass_sq in pygame.sprite.spritecollide(self, self.grass_group, False):
+            if grass_sq.grazes_left > 0:
+                return True
+        return False
+
+    def find_food(self):
+        close_grass = pygame.sprite.spritecollide(self, self.grass_group, False,
+                                                  pygame.sprite.collide_rect_ratio(self.vision))
+        most_grazes = 0
+        best_grass = pygame.sprite.Group()
+        for grass in close_grass:
+            if grass.grazes_left > most_grazes:
+                most_grazes = grass.grazes_left
+                best_grass.empty()  # empty the group
+                best_grass.add(grass)
+            elif grass.grazes_left == most_grazes:
+                best_grass.add(grass)
+
+        # no grass to eat
+        if most_grazes == 0:
+            self.get_random_destination()
+            return
+
+        # TODO: (optional) go to the closest grass_square in best_grass
+        # instead, we will just have the sheep pick one at random
+        random_index = random.randint(0, len(best_grass) - 1)
+        i = 0
+        for grass in best_grass:
+            if i == random_index:
+                self.destination = (grass.rect.x, grass.rect.y)
+                break
+            i += 1
+
+    def mate(self):
+        parent, did_mate = super().mate()  # calling the Animal.mate() function
+        if parent is not None:
+            # spawn a baby sheep
+            baby = Sheep(self.rect.x, self.rect.y, SQ_WIDTH / 4, SQ_HEIGHT / 4, self.grass_group, self.wolf_group,
+                         mating_group=self.mating_group)
+            baby.speed = (self.speed + parent.speed) / 2 + random.uniform(-0.1, 0.1)
+            baby.vision = (self.vision + parent.vision) / 2 + random.uniform(-0.1, 0.1)
+            self.mating_group.add(baby)
+
+    def nearby_danger(self):
+        nearby_danger = pygame.sprite.spritecollide(self, self.wolf_group, False,
+                                                    pygame.sprite.collide_rect_ratio(self.vision))
+        if len(nearby_danger) != 0:
+            return True
+
+    def avoid_danger(self):
+        for wolf in pygame.sprite.spritecollide(self, self.wolf_group, False,
+                                                    pygame.sprite.collide_rect_ratio(self.vision)):
+            move_x = float(wolf.rect.x - self.rect.x)*-0.1
+            move_y = float(wolf.rect.y - self.rect.y)*-0.1
+            dest_x = float(self.rect.x + move_x)
+            dest_y = float(self.rect.y + move_y)
+            self.destination = (dest_x, dest_y)
+
+
+
+class Wolf(Animal):
+    HUNGER_GAIN_FROM_SHEEP = 35
+    ENERGY_GAIN_FROM_SHEEP = 70
+    MALE_COLOR = 0x232340
+    FEMALE_COLOR = 0x48487d
+    MAX_ENERGY = 2000
+
+    def __init__(self, x, y, w, h, grass_group, sheep_group, image=None, mating_group=None):
+        Animal.__init__(self, x, y, w, h, grass_group, image=image, speed=3.0, mating_group=mating_group)
+        self.grass_group = grass_group
+        self.sheep_group = sheep_group
+        if self.sex == "M":
+            self.image.fill(self.MALE_COLOR)
+        else:
+            self.image.fill(self.FEMALE_COLOR)
+
+    def nearby_food(self):
+        for sheep_sq in pygame.sprite.spritecollide(self, self.sheep_group, False):
+            if sheep_sq.alive:
+                return True
+        return False
+
+    def find_food(self):
+        close_sheep = pygame.sprite.spritecollide(self, self.sheep_group, False,
+                                                  pygame.sprite.collide_rect_ratio(self.vision))
+        for sheep in close_sheep:
+            dest_x = sheep.rect.x
+            dest_y = sheep.rect.y
+            self.destination = (dest_x, dest_y)
+
+    def eat(self):
+        food = []
+        for sheep_sq in pygame.sprite.spritecollide(self, self.sheep_group, False):
+            food.append(sheep_sq)
+        sheep_sq = random.choice(food)
+        if sheep_sq.alive:
+            sheep_sq.image.fill("black")
+            sheep_sq.can_mate = False
+            sheep_sq.alive = False
+        elif not sheep_sq.alive:
+            self.hunger += self.HUNGER_GAIN_FROM_SHEEP
+            self.energy += self.ENERGY_GAIN_FROM_SHEEP
+            if self.hunger > self.MAX_HUNGER:
+                self.hunger = self.MAX_HUNGER
+            sheep_sq.decay_time = sheep_sq.DECAY_TIME + 10
+        self.state = self.THINKING
+
+    def mate(self):
+        parent, did_mate = super().mate()  # calling the Animal.mate() function
+        print("Wolf mate: ", did_mate)
+        if parent is not None and self.sex != parent.sex:
+            baby = Wolf(self.rect.x, self.rect.y, SQ_WIDTH / 4, SQ_HEIGHT / 4, self.grass_group, self.sheep_group,
+                        mating_group=self.mating_group)
+            baby.speed = (self.speed + parent.speed) / 2 + random.uniform(-0.1, 0.1)
+            baby.vision = (self.vision + parent.vision) / 2 + random.uniform(-0.1, 0.1)
+            self.mating_group.add(baby)
+            return baby
+
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((600, 600))
+    running = True
+    clock = pygame.time.Clock()  # for managing the framerate
+
+    grass_group = pygame.sprite.Group()
+    for row in range(ROWS):
+        y = row * SQ_HEIGHT
+        for col in range(COLUMNS):
+            x = col * SQ_WIDTH
+            grass_object = Grass(x, y, SQ_WIDTH, SQ_HEIGHT)
+            grass_group.add(grass_object)
+
+    # animal group
+    sheep_group = pygame.sprite.Group()
+    wolf_group = pygame.sprite.Group()
+    for i in range(NUM_SHEEP):
+        sheep = Sheep(random.randint(0, 600), random.randint(0, 600), SQ_WIDTH / 2, SQ_HEIGHT / 2, grass_group,
+                      wolf_group=wolf_group, mating_group=sheep_group)
+        sheep_group.add(sheep)
+    for i in range(NUM_WOLF):
+        wolf = Wolf(random.randint(0, 600), random.randint(0, 600), SQ_WIDTH / 2, SQ_HEIGHT / 2, grass_group,
+                    sheep_group=sheep_group, mating_group=wolf_group)
+        wolf_group.add(wolf)
+
+    frame_count = 0
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        frame_count += 1
+        if frame_count % (10 * FPS) == 0:
+            speed = 0
+            for sheep in sheep_group:
+                speed += sheep.speed
+            for wolf in wolf_group:
+                speed += wolf.speed
+            print("Average speed of sheep: ", speed / len(sheep_group))
+            print("Average speed of wolf: ", speed / len(wolf_group))
+
+        grass_group.update()
+        sheep_group.update()
+        wolf_group.update()
+
+        grass_group.draw(screen)
+        sheep_group.draw(screen)
+        wolf_group.draw(screen)
+
+        clock.tick(FPS)
+        pygame.display.flip()
+
+
+if __name__ == '__main__':
+    main()
+
