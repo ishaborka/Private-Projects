@@ -1,0 +1,238 @@
+CollegeNames = ["Cal", "Penn State", "SUNY at Buffalo", "Stony Brook", "Washington State", "Arizona State", "University of Michigan", "UNC", "UT Austin", "Georgia Tech", "Wake Forest", "CMU", "Boston University", "Yale", "Stanford", "Drexel", "Washington & Lee", "USC", "NYU", "Syracuse"]
+
+CollegeSAT = [1420, 1190, 1225, 1410, 1115, 1210, 1430, 1385, 1340, 1450, 1390, 1495, 1425, 1520, 1520, 1280, 1280, 1425, 1435, 1510, 1280]
+
+CollegeACT = [32, 26, 26, 29, 23, 24, 32, 30, 29, 33, 31, 34, 33, 34, 33, 28, 33, 32, 32, 38]
+
+CollegeType = ["public", "public", "public", "public", "public","public", "public", "public", "public", "public", "private", "private", "private", "private", "private", "private", "private", "private", "private", "private"]
+
+CollegeSize = [30000, 70000, 20000, 18000, 25000, 65000, 30000, 19000, 40000,16000, 5000, 7000, 18000, 5000, 8000, 15000, 2000, 20000, 30000, 14000]
+
+CollegeInStateCost = [11442, 18368, 7070, 7070, 9953, 10710, 15230, 7019, 10824, 10258, 62128, 57560, 56854, 55500, 55473, 52146, 53730, 57256, 56500, 54270]
+
+CollegeOutOfState = [41196, 35946, 24740, 24740, 24531, 28800, 50872, 34198, 38326, 31370, 62128, 57560, 56854, 55500, 55473, 52146, 53730, 57256, 56500, 54270]
+
+CollegeSetting = ["city", "city", "suburb", "suburb", "town", "city", "city", "city", "city", "city", "city", "city", "city", "city", "suburb", "city", "town", "city", "city", "city"]
+
+CollegeLocation = ["CA", "PA", "NY", "NY", "WA", "AZ", "MI", "NC", "TX", "GA", "NC", "PA", "MA", "CT", "CA", "PA", "VA", "CA", "NY", "NY"]
+
+# Lists of all the data for the colleges, with the indexes matching that of the first list with the names. 
+
+
+def userInput():
+  userData = []
+  print( "Welcome to this College Data Match, where match you to a college that we think is the best fit for you. "
+        "Happy College Season!!!")
+  userTest = input("Are you going test-optional?")
+  # Will allow the appropriate responses for the two data fields of ACT and SAT
+  if userTest.lower() == "no":
+      askTest = input("Did you take the SAT or the ACT?")
+      if askTest.lower() == "sat":
+          userSAT = int(input("What is your SAT score?"))
+          userACT = "None"
+          userData.append(userSAT)
+          userData.append(userACT)
+          # Will have only an SAT Score
+      elif askTest.lower() == "act":
+          userACT = int(input("What is your ACT score?"))
+          userSAT = "None"
+          userData.append(userSAT)
+          userData.append(userACT)
+          # Will have only an ACT Score
+      elif askTest.lower() == "both":
+          userSAT = int(input("What is your SAT score?"))
+          userACT = int(input("What is your ACT score?"))
+          userData.append(userSAT)
+          userData.append(userACT)
+          # Will have both an ACT and SAT Score
+  else:
+    userSAT = "None"
+    userACT = "None"
+    userData.append(userSAT)
+    userData.append(userACT)
+    # If they are test-optional they will have niether an ACT or SAT Score
+    
+  userChoice = input("Do you want to go to a public or private college?")
+  userSize = int(input("What size school do you want to go to (number of students)?"))
+  userCost = int(input("How much can you afford to pay for college?"))
+  userSetting = input("What type of school do you want to go to (City, Town, Suburb...)?")
+  userLocation = input("Where are you from (State Abbrivation)?")
+  userData.append(userChoice.lower())
+  userData.append(userSize)
+  userData.append(userCost)
+  userData.append(userSetting.lower())
+  userData.append(userLocation.upper())
+  userData.append(userTest.lower())
+  print("Your Data:")
+  print(userData)
+  
+  # Collects the data, and inputs it into a list, so the different indexes can be used to compare with the lists of the information 
+  # from the colleges
+  
+  return userData
+  
+# All functions will creates individual lists for the parameter that it is dealing with. Each is set to work with the CollegeNames list, to 
+# return a list of names that fits that parameter. Then we iterate through all the lists, depending on test-optional, to get the proper
+# instersection from all the different lists, to return the common ones. 
+
+def SAT(userData):
+  userSATOptions = []
+  for i in range(len(CollegeSAT)):
+    if userData[0] >= int(CollegeSAT[i]):
+      if userData[0] <= CollegeSAT[i] + 100:
+        userSATOptions.append(CollegeNames[i])
+        # Will add the colleges that they have an SAT Score that is greater than their average, but less than 100 points over it
+    elif userData[0] < CollegeSAT[i]:
+      if userData[0] >= CollegeSAT[i] - 100:
+        userSATOptions.append(CollegeNames[i])
+        # Will add colleges that they have a lower SAT Score than the average, but less than 100 pointes under it
+  return userSATOptions
+      
+
+def ACT(userData):
+  userACTOptions = []
+  for i in range(len(CollegeACT)):
+    if userData[1] >= CollegeACT[i]: 
+      if userData[1] <= CollegeACT[i] + 3:
+        userACTOptions.append(CollegeNames[i])
+        # Will add the colleges that have an ACT Score no less than 3 lower than the users'
+    elif userData[1] < CollegeACT[i]:
+      if userData[1] >= CollegeACT[i] - 3:
+        userACTOptions.append(CollegeNames[i])
+        # Will add the colleges that have an ACT Score no greater than 3 greater than the users'
+  return userACTOptions
+
+
+def Type(userData):
+  userTypeOptions = []
+  for i in range(len(CollegeType)):
+    if userData[2] == CollegeType[i]:
+      userTypeOptions.append(CollegeNames[i])
+      # Will add all public or private colleges, depending on their answer
+  return userTypeOptions
+
+
+def Size(userData):
+  userSizeOptions = []
+  for i in range(len(CollegeSize)):
+    if userData[3] >= CollegeSize[i]: 
+      if userData[3] <= CollegeSize[i] + 5000:
+        userSizeOptions.append(CollegeNames[i])
+        # Will add colleges that have a size no less than 5000 below what they want
+    elif userData[3] < CollegeSize[i]:
+      if userData[3] >= CollegeSize[i] - 5000:
+        userSizeOptions.append(CollegeNames[i])
+        # Will add colleges that have a size no greater than 5000 above what they want
+    # Creates a range of 10,000 with the ideal size of the user at the middle
+  return userSizeOptions
+  
+
+def Cost(userData):
+  userCostOptions = []
+  for i in range(len(CollegeLocation)):
+    # Checks to see if in-state cost should be used
+    if userData[6] == CollegeLocation[i]:
+      if userData[4] <= 20000 and CollegeInStateCost[i] <= 20000:
+        userCostOptions.append(CollegeNames[i])
+        # If they are in the same state, and both their paying ability and that of the college are less than $20,000, adding them
+        # This will allow almost any in-state college to be added, but only if it is public - has a different price for in-state
+      elif userData[4] >= CollegeInStateCost[i]:
+        userCostOptions.append(CollegeNames[i])
+        # If they can pay more than the cost, and they happen to be in-state it will add
+        # Will add in-state private if they can pay
+    elif userData[6] != CollegeLocation[i]:
+      if userData[4] >= CollegeOutOfState[i]:
+        userCostOptions.append(CollegeNames[i])
+        # Will add any college that they have the means to pay for
+      elif userData[4] < CollegeOutOfState[i]:
+        if userData[4] >= CollegeOutOfState[i] - 5000:
+          userCostOptions.append(CollegeNames[i])
+        # Will add any college that they are within 5000 of thier cost
+  return userCostOptions
+
+
+def Setting(userData):
+  userSettingOptions = []
+  for i in range(len(CollegeSetting)):
+    if userData[5] == CollegeSetting[i]:
+      userSettingOptions.append(CollegeNames[i])
+      # Checks to see if the setting matches. The input is controlled for lowercase using the .lower function, so the string comparison
+      # should match the values in the list
+  return userSettingOptions
+    
+
+def Intersection():
+  userData = userInput()
+  userTypeOptions = set(Type(userData))
+  userSizeOptions = set(Size(userData))
+  userCostOptions = set(Cost(userData))
+  userSettingOptions = set(Setting(userData))
+  #Not taking SAT or ACT
+  if userData[7] == "yes":
+    UserCollegeOptions = userTypeOptions.intersection(userSizeOptions, userCostOptions, userSettingOptions)
+    # Compares the potential common values between all the different lists
+    UserCollegeOptionsList = list(UserCollegeOptions)
+    # Calls all the functions if not taking the SAT and ACT
+    if len(UserCollegeOptions) == 0:
+      print("We do not have a match for you in our data. Please check a larger database.")
+      # Will print if no options are returned
+    else:
+      print("Congratulations for completing our College Match Program. This is a list of all the colleges that might be a good fit for            you.")
+      print(UserCollegeOptionsList)
+      # Will print the options that are found in the intersection of the list
+    return UserCollegeOptionsList
+    
+  #taking ACT but not SAT
+  elif userData[7] == "no" and userData[0] == "None":
+    userACTOptions = set(ACT(userData))
+    UserCollegeOptions = userACTOptions.intersection(userTypeOptions, userSizeOptions, userCostOptions, userSettingOptions)
+    # Calls all the functions, including only ACT because that was all they took. 
+    UserCollegeOptionsList = list(UserCollegeOptions)
+    if len(UserCollegeOptions) == 0:
+      print("We do not have a match for you in our data. Please check a larger database.")
+      # Will print if no options are returned
+    else:
+      print("Congratulations for completing our College Match Program. This is a list of all the colleges that might be a good fit for            you.")
+      print(UserCollegeOptionsList)
+      # Will print the options that are found in the intersection of the list
+    return UserCollegeOptionsList
+
+  #taking SAT but not ACT
+  elif userData[7] == "no" and userData[1] == "None":
+    userSATOptions = set(SAT(userData))
+    UserCollegeOptions = userSATOptions.intersection(userTypeOptions, userSizeOptions, userCostOptions, userSettingOptions)
+    # Calls all the functions, and compares the common results from that function
+    # Only calls SAT because that was all they took
+    UserCollegeOptionsList = list(UserCollegeOptions)
+    if len(UserCollegeOptions) == 0:
+      print("We do not have a match for you in our data. Please check a larger database.")
+      # Will print if no options are returned
+    else:
+      print("Congratulations for completing our College Match Program. This is a list of all the colleges that might be a good fit for            you.")
+      print(UserCollegeOptionsList)
+      # Will print the options that are found in the intersection of the list
+    return UserCollegeOptionsList
+    
+  #taking both SAT and ACT 
+  elif userData[7] == "no" and userData[0] != "None" and userData[1] != "None":
+    userSATOptions = set(SAT(userData))
+    userACTOptions = set(ACT(userData))
+    UserCollegeOptions = userSATOptions.intersection(userACTOptions, userTypeOptions, userSizeOptions, userCostOptions, userSettingOptions)
+    # Calls and compares all the values in the function, including SAT and ACT
+    UserCollegeOptionsList = list(UserCollegeOptions)
+    if len(UserCollegeOptions) == 0:
+      print("We do not have a match for you in our data. Please check a larger database.")
+      # Will print if no options are returned
+    else:
+      print("Congratulations for completing our College Match Program. This is a list of all the colleges that might be a good fit for            you.")
+      print(UserCollegeOptionsList)
+      # Will print the options that are found in the intersection of the list
+    return UserCollegeOptionsList
+
+
+if __name__ == '__main__':
+  Intersection()
+  
+
+#https://www.geeksforgeeks.org/python-intersection-of-multiple-lists/
+#This website helped us in figuring out how to intersect all of our lines after we converted them into sets
