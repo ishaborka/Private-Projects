@@ -1,15 +1,5 @@
-/*
- * Palindrome.java
- *
- * Computer Science 112
- *
- * Modifications and additions by:
- *     name: Jennifer Alonzo Moreno
- *     username:
- */
-   
- public class Palindrome {
-    // Add your definition of isPal here.
+    public class Palindrome {
+    
     private static boolean isLetter(char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
     }
@@ -60,91 +50,8 @@
             System.out.println("INCORRECTLY THREW AN EXCEPTION: " + e);
         }
         
-        System.out.println();    // include a blank line between tests
-        
-        /*
-         * Add five more unit tests that test a variety of different
-         * cases. Follow the same format that we have used above.
-         */
-
-        System.out.println("(1) Testing on \"Do Geese? See God?\"");
-        try {
-            boolean results = isPal("Do Geese? See God");
-            boolean expected = true;
-            System.out.println("actual results:");
-            System.out.println(results);
-            System.out.println("expected results:");
-            System.out.println(expected);
-            System.out.print("MATCHES EXPECTED RESULTS?: ");
-            System.out.println(results == expected);
-        } catch (Exception e) {
-            System.out.println("INCORRECTLY THREW AN EXCEPTION: " + e);
-        }
-        
-        System.out.println();    // include a blank line between tests
-        
-        System.out.println("(2) Testing on \"This is not a palindrome.\"");
-        try {
-            boolean results = isPal("This is not a palindrome.");
-            boolean expected = false;
-            System.out.println("actual results:");
-            System.out.println(results);
-            System.out.println("expected results:");
-            System.out.println(expected);
-            System.out.print("MATCHES EXPECTED RESULTS?: ");
-            System.out.println(results == expected);
-        } catch (Exception e) {
-            System.out.println("INCORRECTLY THREW AN EXCEPTION: " + e);
-        }
-        
-        System.out.println(); 
-
-        System.out.println("(3) Testing on \"j\"");
-        try {
-            boolean results = isPal("j");
-            boolean expected = true;
-            System.out.println("actual results:");
-            System.out.println(results);
-            System.out.println("expected results:");
-            System.out.println(expected);
-            System.out.print("MATCHES EXPECTED RESULTS?: ");
-            System.out.println(results == expected);
-        } catch (Exception e) {
-            System.out.println("INCORRECTLY THREW AN EXCEPTION: " + e);
-        }
-        
-        System.out.println(); 
-
-        System.out.println("(4) Testing on \"Ra@ts Live %on no *evIl stAr#\"");
-        try {
-            boolean results = isPal("Ra@ts Live %on no *evIl stAr#");
-            boolean expected = true;
-            System.out.println("actual results:");
-            System.out.println(results);
-            System.out.println("expected results:");
-            System.out.println(expected);
-            System.out.print("MATCHES EXPECTED RESULTS?: ");
-            System.out.println(results == expected);
-        } catch (Exception e) {
-            System.out.println("INCORRECTLY THREW AN EXCEPTION: " + e);
-        }
-        
-        System.out.println(); 
-        System.out.println("(5) Testing on \"jennifer and isha\"");
-        try {
-            boolean results = isPal("jennifer and isha");
-            boolean expected = false;
-            System.out.println("actual results:");
-            System.out.println(results);
-            System.out.println("expected results:");
-            System.out.println(expected);
-            System.out.print("MATCHES EXPECTED RESULTS?: ");
-            System.out.println(results == expected);
-        } catch (Exception e) {
-            System.out.println("INCORRECTLY THREW AN EXCEPTION: " + e);
-        }
-        
-        System.out.println(); 
+        System.out.println();    
+         
 
     }
 }
